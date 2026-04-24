@@ -4,8 +4,7 @@ import Editor from '@monaco-editor/react';
 const CodeEditor = ({ socket, roomId }) => {
   const [language, setLanguage] = useState('javascript');
   const [code, setCode] = useState('// Start coding...');
-  const [usersInRoom, setUsersInRoom] = useState(1);
-  const isSettingCode = useRef(false); // Flag to prevent infinite loops
+  const isSettingCode = useRef(false);
 
   useEffect(() => {
     if (!socket) return;
@@ -15,13 +14,8 @@ const CodeEditor = ({ socket, roomId }) => {
       setCode(newCode);
     });
 
-    socket.on('room-users', (count) => {
-      setUsersInRoom(count);
-    });
-
     return () => {
       socket.off('code-change');
-      socket.off('room-users');
     };
   }, [socket]);
 
@@ -39,6 +33,18 @@ const CodeEditor = ({ socket, roomId }) => {
     socket.emit('code-change', { roomId, code: value });
   };
 
+  const handleEditorDidMount = (editor, monaco) => {
+    editor.onDidChangeCursorPosition((e) => {
+      socket.emit('cursor-move', {
+        roomId,
+        cursor: {
+          lineNumber: e.position.lineNumber,
+          column: e.position.column
+        }
+      });
+    });
+  };
+
   return (
     <div className="editor-container">
       <div className="editor-header">
@@ -46,7 +52,7 @@ const CodeEditor = ({ socket, roomId }) => {
           <h2 className="editor-title">Collaborative Code Editor</h2>
           <span style={{fontSize: '0.9rem', color: '#4caf50', display: 'flex', alignItems: 'center', gap: '5px'}}>
             <div style={{width: '8px', height: '8px', backgroundColor: '#4caf50', borderRadius: '50%'}}></div>
-            Room: {roomId} ({usersInRoom} online)
+            Room: {roomId}
           </span>
         </div>
         <select 
@@ -66,6 +72,7 @@ const CodeEditor = ({ socket, roomId }) => {
           theme="vs-dark"
           value={code}
           onChange={handleEditorChange}
+          onMount={handleEditorDidMount}
           options={{
             minimap: { enabled: false },
             fontSize: 16,

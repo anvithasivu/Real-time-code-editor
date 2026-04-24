@@ -15,35 +15,93 @@ const io = new Server(server, {
   }
 });
 
+// rooms tracking:
+// roomId -> [ { socketId, username, cursor: null } ]
+const rooms = {};
+
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
-  // Listen for user joining a room
-  socket.on('join-room', (roomId) => {
+  // Join Room
+  socket.on('join-room', ({ roomId, username }) => {
     socket.join(roomId);
-    console.log(`User ${socket.id} joined room: ${roomId}`);
+    socket.data.roomId = roomId; // store on socket for disconnect handling
+    socket.data.username = username;
     
-    // Broadcast updated user count to everyone in the room
-    const clientsInRoom = io.sockets.adapter.rooms.get(roomId)?.size || 0;
-    io.to(roomId).emit('room-users', clientsInRoom);
+    if (!rooms[roomId]) {
+      rooms[roomId] = [];
+    }
+    
+    // Add user to room tracking
+    rooms[roomId].push({
+      socketId: socket.id,
+      username: username,
+      cursor: null
+    });
+
+    console.log(`User ${username} (${socket.id}) joined room: ${roomId}`);
+    
+    // Broadcast updated user list to everyone in the room
+    io.to(roomId).emit('room-users', rooms[roomId]);
+    
+    // Send a system message that user joined
+    io.to(roomId).emit('new-message', {
+      sender: 'System',
+      text: `${username} joined the room.`,
+      system: true
+    });
   });
 
-  // Listen for code changes
+  // Handle Code Change
   socket.on('code-change', ({ roomId, code }) => {
-    // Broadcast the code to everyone in the room EXCEPT the sender
     socket.to(roomId).emit('code-change', code);
   });
 
-  // Handle when a user disconnects or leaves a room
-  socket.on('disconnecting', () => {
-    for (const room of socket.rooms) {
-      if (room !== socket.id) {
-        // Calculate new size manually since the user hasn't fully left yet
-        const clientsInRoom = (io.sockets.adapter.rooms.get(room)?.size || 1) - 1;
-        socket.to(room).emit('room-users', clientsInRoom);
+  // Handle Cursor Move
+  socket.on('cursor-move', ({ roomId, cursor }) => {
+    if (rooms[roomId]) {
+      const user = rooms[roomId].find(u => u.socketId === socket.id);
+      if (user) {
+        user.cursor = cursor;
+        // Broadcast the updated user list containing cursor positions
+        io.to(roomId).emit('room-users', rooms[roomId]);
       }
     }
   });
+
+  // Handle Chat Messages
+  socket.on('send-message', ({ roomId, message }) => {
+    io.to(roomId).emit('new-message', {
+      sender: socket.data.username,
+      text: message,
+      system: false
+    });
+  });
+
+  // Handle Disconnect
+  const handleLeave = () => {
+    const roomId = socket.data.roomId;
+    const username = socket.data.username;
+    
+    if (roomId && rooms[roomId]) {
+      rooms[roomId] = rooms[roomId].filter(u => u.socketId !== socket.id);
+      
+      // If room is empty, clean it up
+      if (rooms[roomId].length === 0) {
+        delete rooms[roomId];
+      } else {
+        // Otherwise, broadcast updated list and send system message
+        io.to(roomId).emit('room-users', rooms[roomId]);
+        io.to(roomId).emit('new-message', {
+          sender: 'System',
+          text: `${username} left the room.`,
+          system: true
+        });
+      }
+    }
+  };
+
+  socket.on('disconnecting', handleLeave);
 
   socket.on('disconnect', () => {
     console.log(`User disconnected: ${socket.id}`);
