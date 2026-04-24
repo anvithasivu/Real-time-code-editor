@@ -1,0 +1,16 @@
+-- PostgreSQL Database Schema
+
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(50) UNIQUE NOT NULL,
+  email VARCHAR(100) UNIQUE NOT NULL,
+  password VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS rooms (
+  id VARCHAR(50) PRIMARY KEY,
+  code TEXT DEFAULT '// Start coding...',
+  language VARCHAR(20) DEFAULT 'javascript',
+  last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

@@ -3,8 +3,16 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 
+const authRoutes = require('./routes/authRoutes');
+const codeRoutes = require('./routes/codeRoutes');
+
 const app = express();
 app.use(cors());
+app.use(express.json());
+
+// API Routes
+app.use('/auth', authRoutes);
+app.use('/code', codeRoutes);
 
 const server = http.createServer(app);
 
@@ -25,14 +33,13 @@ io.on('connection', (socket) => {
   // Join Room
   socket.on('join-room', ({ roomId, username }) => {
     socket.join(roomId);
-    socket.data.roomId = roomId; // store on socket for disconnect handling
+    socket.data.roomId = roomId;
     socket.data.username = username;
     
     if (!rooms[roomId]) {
       rooms[roomId] = [];
     }
     
-    // Add user to room tracking
     rooms[roomId].push({
       socketId: socket.id,
       username: username,
@@ -41,10 +48,8 @@ io.on('connection', (socket) => {
 
     console.log(`User ${username} (${socket.id}) joined room: ${roomId}`);
     
-    // Broadcast updated user list to everyone in the room
     io.to(roomId).emit('room-users', rooms[roomId]);
     
-    // Send a system message that user joined
     io.to(roomId).emit('new-message', {
       sender: 'System',
       text: `${username} joined the room.`,
@@ -52,24 +57,20 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle Code Change
   socket.on('code-change', ({ roomId, code }) => {
     socket.to(roomId).emit('code-change', code);
   });
 
-  // Handle Cursor Move
   socket.on('cursor-move', ({ roomId, cursor }) => {
     if (rooms[roomId]) {
       const user = rooms[roomId].find(u => u.socketId === socket.id);
       if (user) {
         user.cursor = cursor;
-        // Broadcast the updated user list containing cursor positions
         io.to(roomId).emit('room-users', rooms[roomId]);
       }
     }
   });
 
-  // Handle Chat Messages
   socket.on('send-message', ({ roomId, message }) => {
     io.to(roomId).emit('new-message', {
       sender: socket.data.username,
@@ -78,7 +79,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle Disconnect
   const handleLeave = () => {
     const roomId = socket.data.roomId;
     const username = socket.data.username;
@@ -86,11 +86,9 @@ io.on('connection', (socket) => {
     if (roomId && rooms[roomId]) {
       rooms[roomId] = rooms[roomId].filter(u => u.socketId !== socket.id);
       
-      // If room is empty, clean it up
       if (rooms[roomId].length === 0) {
         delete rooms[roomId];
       } else {
-        // Otherwise, broadcast updated list and send system message
         io.to(roomId).emit('room-users', rooms[roomId]);
         io.to(roomId).emit('new-message', {
           sender: 'System',

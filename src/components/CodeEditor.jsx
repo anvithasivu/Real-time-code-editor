@@ -1,10 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
+import axios from 'axios';
 
 const CodeEditor = ({ socket, roomId }) => {
   const [language, setLanguage] = useState('javascript');
   const [code, setCode] = useState('// Start coding...');
+  const [output, setOutput] = useState('');
+  const [isRunning, setIsRunning] = useState(false);
   const isSettingCode = useRef(false);
+  const saveTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    const loadCode = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await axios.get(`http://localhost:5000/code/load/${roomId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        isSettingCode.current = true;
+        setCode(response.data.code);
+        setLanguage(response.data.language);
+      } catch (err) {
+        console.error('Failed to load code from DB:', err);
+      }
+    };
+    loadCode();
+  }, [roomId]);
 
   useEffect(() => {
     if (!socket) return;
@@ -19,8 +40,22 @@ const CodeEditor = ({ socket, roomId }) => {
     };
   }, [socket]);
 
+  const saveCodeToDB = async (currentCode, currentLang) => {
+    try {
+      const token = localStorage.getItem('token');
+      await axios.post('http://localhost:5000/code/save', 
+        { roomId, code: currentCode, language: currentLang },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch (err) {
+      console.error('Failed to save code:', err);
+    }
+  };
+
   const handleLanguageChange = (e) => {
-    setLanguage(e.target.value);
+    const newLang = e.target.value;
+    setLanguage(newLang);
+    saveCodeToDB(code, newLang);
   };
 
   const handleEditorChange = (value) => {
@@ -31,6 +66,31 @@ const CodeEditor = ({ socket, roomId }) => {
 
     setCode(value);
     socket.emit('code-change', { roomId, code: value });
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      saveCodeToDB(value, language);
+    }, 2000);
+  };
+
+  const handleRunCode = async () => {
+    setIsRunning(true);
+    setOutput('Running...');
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.post('http://localhost:5000/code/run', 
+        { code, language },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      
+      const { stdout, stderr, compile_output } = response.data;
+      const finalOutput = compile_output || stderr || stdout || 'Code executed successfully with no output.';
+      setOutput(finalOutput);
+    } catch (err) {
+      setOutput(err.response?.data?.error || 'Execution failed. Please try again.');
+    } finally {
+      setIsRunning(false);
+    }
   };
 
   const handleEditorDidMount = (editor, monaco) => {
@@ -46,7 +106,7 @@ const CodeEditor = ({ socket, roomId }) => {
   };
 
   return (
-    <div className="editor-container">
+    <div className="editor-container" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="editor-header">
         <div style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
           <h2 className="editor-title">Collaborative Code Editor</h2>
@@ -55,17 +115,34 @@ const CodeEditor = ({ socket, roomId }) => {
             Room: {roomId}
           </span>
         </div>
-        <select 
-          className="language-selector" 
-          value={language} 
-          onChange={handleLanguageChange}
-        >
-          <option value="javascript">JavaScript</option>
-          <option value="python">Python</option>
-          <option value="cpp">C++</option>
-        </select>
+        <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
+          <select 
+            className="language-selector" 
+            value={language} 
+            onChange={handleLanguageChange}
+          >
+            <option value="javascript">JavaScript</option>
+            <option value="python">Python</option>
+            <option value="cpp">C++</option>
+          </select>
+          <button 
+            onClick={handleRunCode} 
+            disabled={isRunning}
+            style={{
+              padding: '6px 16px',
+              backgroundColor: isRunning ? '#555' : 'var(--accent-color)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: isRunning ? 'not-allowed' : 'pointer',
+              fontWeight: 'bold'
+            }}
+          >
+            {isRunning ? 'Running...' : 'Run Code'}
+          </button>
+        </div>
       </div>
-      <div className="editor-wrapper">
+      <div className="editor-wrapper" style={{ flex: 2, position: 'relative' }}>
         <Editor
           height="100%"
           language={language}
@@ -81,6 +158,31 @@ const CodeEditor = ({ socket, roomId }) => {
             padding: { top: 16 }
           }}
         />
+      </div>
+      
+      <div className="output-console" style={{
+        flex: 1,
+        backgroundColor: '#1e1e1e',
+        borderTop: '2px solid #333',
+        padding: '10px',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden'
+      }}>
+        <div style={{ color: '#888', marginBottom: '5px', fontWeight: 'bold' }}>Output Console</div>
+        <pre style={{
+          flex: 1,
+          margin: 0,
+          padding: '10px',
+          backgroundColor: '#000',
+          color: '#00ff00',
+          overflowY: 'auto',
+          fontFamily: 'monospace',
+          borderRadius: '4px',
+          whiteSpace: 'pre-wrap'
+        }}>
+          {output || 'Click "Run Code" to see output here...'}
+        </pre>
       </div>
     </div>
   );
