@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 
+// Production URL Logic
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 function Dashboard() {
   const [rooms, setRooms] = useState([]);
   const [roomId, setRoomId] = useState('');
@@ -26,7 +29,7 @@ function Dashboard() {
     fetchData();
 
     const token = localStorage.getItem('token');
-    const socket = io('http://localhost:5000', { auth: { token } });
+    const socket = io(API_URL, { auth: { token } });
     
     socket.on('incoming-request-global', (newReq) => {
       setPendingRequests(prev => {
@@ -42,8 +45,8 @@ function Dashboard() {
     try {
       const token = localStorage.getItem('token');
       const [roomsRes, reqRes] = await Promise.all([
-        axios.get('http://localhost:5000/code/my-rooms', { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get('http://localhost:5000/code/pending-requests', { headers: { Authorization: `Bearer ${token}` } })
+        axios.get(`${API_URL}/code/my-rooms`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${API_URL}/code/pending-requests`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
       setRooms(roomsRes.data.rooms);
       setPendingRequests(reqRes.data.requests);
@@ -55,7 +58,7 @@ function Dashboard() {
   const handleRequestAction = async (requestId, status) => {
     try {
       const token = localStorage.getItem('token');
-      await axios.post('http://localhost:5000/code/update-request', 
+      await axios.post(`${API_URL}/code/update-request`, 
         { requestId, status }, 
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -72,7 +75,7 @@ function Dashboard() {
     if (!window.confirm(`Are you sure you want to permanently delete room "${id}"? This action cannot be undone.`)) return;
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://localhost:5000/code/delete-room/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.delete(`${API_URL}/code/delete-room/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       setRooms(prev => prev.filter(r => r.id !== id));
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to delete room');
@@ -83,7 +86,7 @@ function Dashboard() {
     if (!roomId) return alert('Enter a Room ID');
     try {
       const token = localStorage.getItem('token');
-      await axios.post('http://localhost:5000/code/create', { roomId }, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.post(`${API_URL}/code/create`, { roomId }, { headers: { Authorization: `Bearer ${token}` } });
       navigate(`/editor/${roomId}`);
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to create room');
@@ -109,7 +112,7 @@ function Dashboard() {
     setModalData(null);
     try {
       const token = localStorage.getItem('token');
-      const res = await axios.get(`http://localhost:5000/code/snapshots/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await axios.get(`${API_URL}/code/snapshots/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       setModalData(res.data.snapshots || []);
     } catch (err) {
       console.error('Failed to fetch history');
@@ -126,7 +129,7 @@ function Dashboard() {
     setModalData(null);
     try {
       const token = localStorage.getItem('token');
-      const res = await axios.get(`http://localhost:5000/code/analytics/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await axios.get(`${API_URL}/code/analytics/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       setModalData(res.data.analytics || []);
     } catch (err) {
       console.error('Failed to fetch analytics');

@@ -1,137 +1,92 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const pool = require('./config/db');
-
 const authRoutes = require('./routes/authRoutes');
 const codeRoutes = require('./routes/codeRoutes');
 
 const app = express();
-app.use(cors());
+
+// Production CORS Configuration
+const allowedOrigins = [
+  'http://localhost:5173',
+  process.env.FRONTEND_URL // Add your Vercel URL here in production
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json());
 
-// API Routes
+// Routes
 app.use('/auth', authRoutes);
 app.use('/code', codeRoutes);
 
 const server = http.createServer(app);
 
+// Production Socket.IO setup
 const io = new Server(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  transports: ['websocket', 'polling']
 });
 
-const rooms = {};
+// Store io in app for controllers
+app.set('io', io);
+
+const rooms = new Map();
 
 io.on('connection', (socket) => {
-  console.log(`User connected: ${socket.id}`);
-
-  // Join Room Request
-  // Join Room Request Notification
-  socket.on('join-request-sent', async ({ roomId, userId, username }) => {
-    try {
-      const roomResult = await pool.query('SELECT creator_id FROM rooms WHERE id = $1', [roomId]);
-      if (roomResult.rows.length > 0) {
-        const creatorId = roomResult.rows[0].creator_id;
-        
-        let creatorSocketId = null;
-        for (const rId in rooms) {
-          const creator = rooms[rId].find(u => u.userId === creatorId);
-          if (creator) {
-            creatorSocketId = creator.socketId;
-            break;
-          }
-        }
-
-        if (creatorSocketId) {
-          io.to(creatorSocketId).emit('incoming-request', {
-            socketId: socket.id,
-            userId,
-            username,
-            roomId
-          });
-        }
-      }
-    } catch (err) {
-      console.error('Socket notification error:', err);
-    }
-  });
-
-  socket.on('approve-user', ({ targetSocketId, roomId, userId, username }) => {
-    io.to(targetSocketId).emit('join-approved', { roomId, userId, username });
-  });
-
-  socket.on('reject-user', ({ targetSocketId }) => {
-    io.to(targetSocketId).emit('join-rejected', { message: 'The room creator denied your request.' });
-  });
-
-  // Actually Join Room
-  const joinRoom = async (socket, roomId, userId, username) => {
-    socket.join(roomId);
-    socket.data.roomId = roomId;
-    socket.data.username = username;
-    socket.data.userId = userId;
-    
-    if (!rooms[roomId]) {
-      rooms[roomId] = [];
-    }
-    
-    // Prevent duplicate entries for the same user ID (e.g. from rapid refreshes)
-    rooms[roomId] = rooms[roomId].filter(u => u.userId !== userId);
-    
-    rooms[roomId].push({
-      socketId: socket.id,
-      userId,
-      username,
-      cursor: null
-    });
-
-    try {
-      await pool.query(
-        `INSERT INTO user_rooms (user_id, room_id) VALUES ($1, $2)
-         ON CONFLICT (user_id, room_id) DO UPDATE SET last_accessed = CURRENT_TIMESTAMP`,
-        [userId, roomId]
-      );
-    } catch (dbErr) {
-      console.error('Error recording room history:', dbErr.message);
-    }
-
-    console.log(`User ${username} (${socket.id}) joined room: ${roomId}`);
-    io.to(roomId).emit('room-users', rooms[roomId]);
-    io.to(roomId).emit('new-message', {
-      sender: 'System',
-      text: `${username} joined the room.`,
-      system: true
-    });
-  };
+  console.log('User connected:', socket.id);
 
   socket.on('join-room', ({ roomId, userId, username }) => {
-    joinRoom(socket, roomId, userId, username);
-  });
-
-  socket.on('code-change', ({ roomId, code }) => {
-    socket.to(roomId).emit('code-change', code);
-  });
-
-  socket.on('cursor-move', ({ roomId, cursor }) => {
-    if (rooms[roomId]) {
-      const user = rooms[roomId].find(u => u.socketId === socket.id);
-      if (user) {
-        user.cursor = cursor;
-        io.to(roomId).emit('room-users', rooms[roomId]);
-      }
+    socket.join(roomId);
+    
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, new Set());
     }
+    rooms.get(roomId).add({ socketId: socket.id, userId, username });
+    
+    const usersInRoom = Array.from(rooms.get(roomId));
+    io.to(roomId).emit('room-users', usersInRoom);
+    
+    console.log(`User ${username} (${socket.id}) joined room: ${roomId}`);
+
+    socket.on('disconnect', () => {
+      if (rooms.has(roomId)) {
+        const roomUsers = rooms.get(roomId);
+        const userObj = Array.from(roomUsers).find(u => u.socketId === socket.id);
+        if (userObj) {
+          roomUsers.delete(userObj);
+          io.to(roomId).emit('room-users', Array.from(roomUsers));
+        }
+      }
+      console.log('User disconnected:', socket.id);
+    });
   });
 
-  socket.on('send-message', ({ roomId, message }) => {
-    io.to(roomId).emit('new-message', {
-      sender: socket.data.username,
-      text: message,
-      system: false
-    });
+  socket.on('code-change', ({ roomId, fileId, code }) => {
+    socket.to(roomId).emit('code-update', { fileId, code });
+  });
+
+  socket.on('cursor-move', ({ roomId, userId, username, cursor }) => {
+    socket.to(roomId).emit('cursor-update', { userId, username, cursor });
+  });
+
+  socket.on('chat-message', ({ roomId, message, username }) => {
+    io.to(roomId).emit('message', { username, message, timestamp: new Date() });
   });
 
   socket.on('file-created', ({ roomId, file }) => {
@@ -140,48 +95,6 @@ io.on('connection', (socket) => {
 
   socket.on('file-deleted', ({ roomId, fileId }) => {
     socket.to(roomId).emit('file-deleted', fileId);
-  });
-
-  socket.on('typing', ({ roomId, username }) => {
-    socket.to(roomId).emit('user-typing', { username });
-  });
-
-  socket.on('stop-typing', ({ roomId }) => {
-    socket.to(roomId).emit('user-stop-typing', { username: socket.data.username });
-  });
-
-  socket.on('activity-update', ({ roomId, message }) => {
-    io.to(roomId).emit('activity-log', {
-      id: Date.now(),
-      text: message,
-      timestamp: new Date().toLocaleTimeString()
-    });
-  });
-
-  const handleLeave = () => {
-    const roomId = socket.data.roomId;
-    const username = socket.data.username;
-    
-    if (roomId && rooms[roomId]) {
-      rooms[roomId] = rooms[roomId].filter(u => u.socketId !== socket.id);
-      
-      if (rooms[roomId].length === 0) {
-        delete rooms[roomId];
-      } else {
-        io.to(roomId).emit('room-users', rooms[roomId]);
-        io.to(roomId).emit('new-message', {
-          sender: 'System',
-          text: `${username} left the room.`,
-          system: true
-        });
-      }
-    }
-  };
-
-  socket.on('disconnecting', handleLeave);
-
-  socket.on('disconnect', () => {
-    console.log(`User disconnected: ${socket.id}`);
   });
 });
 
