@@ -122,8 +122,17 @@ exports.runCode = async (req, res) => {
         stderr = err.stderr || err.message;
       }
       await fs.unlink(filepath).catch(()=>{});
-    } else if (language === 'cpp') {
-      stderr = 'C++ compilation requires g++ to be installed on the host machine. Local execution for C++ is currently disabled.';
+    } else if (language === 'sql') {
+      try {
+        const result = await pool.query(code);
+        if (result.command === 'SELECT') {
+          stdout = JSON.stringify(result.rows, null, 2);
+        } else {
+          stdout = `${result.command} successful. ${result.rowCount || 0} rows affected.`;
+        }
+      } catch (err) {
+        stderr = err.message;
+      }
     } else {
       return res.status(400).json({ error: 'Unsupported language.' });
     }

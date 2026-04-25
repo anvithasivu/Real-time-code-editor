@@ -76,6 +76,11 @@ const CodeEditor = ({ socket, roomId }) => {
   };
 
   const handleRunCode = async () => {
+    if (language === 'html') {
+      setOutput(code); // For HTML, we just update the preview
+      return;
+    }
+
     setIsRunning(true);
     setOutput('Running...');
     try {
@@ -139,7 +144,8 @@ const CodeEditor = ({ socket, roomId }) => {
           >
             <option value="javascript">JavaScript</option>
             <option value="python">Python</option>
-            <option value="cpp">C++</option>
+            <option value="sql">SQL</option>
+            <option value="html">HTML/CSS</option>
           </select>
           <button 
             onClick={handleRunCode} 
@@ -154,14 +160,14 @@ const CodeEditor = ({ socket, roomId }) => {
               fontWeight: 'bold'
             }}
           >
-            {isRunning ? 'Running...' : 'Run Code'}
+            {isRunning ? 'Running...' : (language === 'html' ? 'Refresh Preview' : 'Run Code')}
           </button>
         </div>
       </div>
       <div className="editor-wrapper" style={{ flex: 2, position: 'relative' }}>
         <Editor
           height="100%"
-          language={language}
+          language={language === 'html' ? 'html' : language}
           theme="vs-dark"
           value={code}
           onChange={handleEditorChange}
@@ -185,20 +191,37 @@ const CodeEditor = ({ socket, roomId }) => {
         flexDirection: 'column',
         overflow: 'hidden'
       }}>
-        <div style={{ color: '#888', marginBottom: '5px', fontWeight: 'bold' }}>Output Console</div>
-        <pre style={{
-          flex: 1,
-          margin: 0,
-          padding: '10px',
-          backgroundColor: '#000',
-          color: '#00ff00',
-          overflowY: 'auto',
-          fontFamily: 'monospace',
-          borderRadius: '4px',
-          whiteSpace: 'pre-wrap'
-        }}>
-          {output || 'Click "Run Code" to see output here...'}
-        </pre>
+        <div style={{ color: '#888', marginBottom: '5px', fontWeight: 'bold' }}>
+          {language === 'html' ? 'Live Preview' : 'Output Console'}
+        </div>
+        
+        {language === 'html' ? (
+          <iframe
+            title="preview"
+            srcDoc={output || code}
+            style={{
+              flex: 1,
+              width: '100%',
+              backgroundColor: 'white',
+              border: 'none',
+              borderRadius: '4px'
+            }}
+          />
+        ) : (
+          <pre style={{
+            flex: 1,
+            margin: 0,
+            padding: '10px',
+            backgroundColor: '#000',
+            color: '#00ff00',
+            overflowY: 'auto',
+            fontFamily: 'monospace',
+            borderRadius: '4px',
+            whiteSpace: 'pre-wrap'
+          }}>
+            {output || (language === 'sql' ? 'Write SQL queries to see results...' : 'Click "Run Code" to see output here...')}
+          </pre>
+        )}
       </div>
     </div>
   );
