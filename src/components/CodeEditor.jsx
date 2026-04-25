@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 const CodeEditor = ({ socket, roomId }) => {
+  const navigate = useNavigate();
   const [language, setLanguage] = useState('javascript');
   const [code, setCode] = useState('// Start coding...');
   const [output, setOutput] = useState('');
@@ -116,6 +118,20 @@ const CodeEditor = ({ socket, roomId }) => {
           </span>
         </div>
         <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
+          <button 
+            onClick={() => navigate('/dashboard')}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: '#333',
+              color: 'white',
+              border: '1px solid #555',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              marginRight: '10px'
+            }}
+          >
+            Dashboard
+          </button>
           <select 
             className="language-selector" 
             value={language} 
