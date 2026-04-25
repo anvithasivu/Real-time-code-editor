@@ -3,14 +3,29 @@ import Editor from '@monaco-editor/react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
+const USER_COLORS = ['#F44336', '#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4', '#009688', '#4CAF50'];
+
 const CodeEditor = ({ socket, roomId }) => {
   const navigate = useNavigate();
   const [language, setLanguage] = useState('javascript');
   const [code, setCode] = useState('// Start coding...');
   const [output, setOutput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
+  
+  const editorRef = useRef(null);
   const isSettingCode = useRef(false);
   const saveTimeoutRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
+  const decorationsRef = useRef({}); // userId -> decorationIds[]
+
+  const getMyColor = () => {
+    const userId = parseInt(localStorage.getItem('userId'), 10) || 0;
+    return USER_COLORS[userId % USER_COLORS.length];
+  };
+
+  const getUserColor = (userId) => {
+    return USER_COLORS[userId % USER_COLORS.length];
+  };
 
   useEffect(() => {
     const loadCode = async () => {
@@ -37,10 +52,92 @@ const CodeEditor = ({ socket, roomId }) => {
       setCode(newCode);
     });
 
+    socket.on('cursor-move', ({ userId, username, cursor }) => {
+      if (!editorRef.current || userId === parseInt(localStorage.getItem('userId'))) return;
+      updateUserDecorations(userId, username, cursor);
+    });
+
+    socket.on('remote-change-highlight', ({ userId, range }) => {
+      if (!editorRef.current || userId === parseInt(localStorage.getItem('userId'))) return;
+      applyTemporaryHighlight(userId, range);
+    });
+
     return () => {
       socket.off('code-change');
+      socket.off('cursor-move');
+      socket.off('remote-change-highlight');
     };
   }, [socket]);
+
+  const updateUserDecorations = (userId, username, cursor) => {
+    const editor = editorRef.current;
+    const color = getUserColor(userId);
+    const uniqueClass = `cursor-${userId}`;
+
+    // Create dynamic style for this cursor if it doesn't exist
+    if (!document.getElementById(uniqueClass)) {
+      const style = document.createElement('style');
+      style.id = uniqueClass;
+      style.innerHTML = `
+        .${uniqueClass} {
+          background-color: ${color};
+          width: 2px !important;
+        }
+        .${uniqueClass}-label {
+          background-color: ${color};
+          color: white;
+          font-size: 10px;
+          padding: 2px 4px;
+          border-radius: 2px;
+          position: absolute;
+          top: -15px;
+          white-space: nowrap;
+          z-index: 10;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    const newDecorations = [
+      {
+        range: new window.monaco.Range(cursor.lineNumber, cursor.column, cursor.lineNumber, cursor.column + 1),
+        options: {
+          className: uniqueClass,
+          afterContentClassName: `${uniqueClass}-label`,
+          after: { content: username }
+        }
+      }
+    ];
+
+    const oldDecorations = decorationsRef.current[userId] || [];
+    decorationsRef.current[userId] = editor.deltaDecorations(oldDecorations, newDecorations);
+  };
+
+  const applyTemporaryHighlight = (userId, range) => {
+    const editor = editorRef.current;
+    const color = getUserColor(userId);
+    const highlightClass = `highlight-${userId}-${Date.now()}`;
+
+    const style = document.createElement('style');
+    style.innerHTML = `.${highlightClass} { background-color: ${color}44; }`;
+    document.head.appendChild(style);
+
+    const decoration = [
+      {
+        range: new window.monaco.Range(range.startLineNumber, range.startColumn, range.endLineNumber, range.endColumn),
+        options: {
+          className: highlightClass,
+          isWholeLine: false
+        }
+      }
+    ];
+
+    const ids = editor.deltaDecorations([], decoration);
+    setTimeout(() => {
+      editor.deltaDecorations(ids, []);
+      style.remove();
+    }, 2000);
+  };
 
   const saveCodeToDB = async (currentCode, currentLang) => {
     try {
@@ -60,15 +157,41 @@ const CodeEditor = ({ socket, roomId }) => {
     saveCodeToDB(code, newLang);
   };
 
-  const handleEditorChange = (value) => {
+  const handleEditorChange = (value, event) => {
     if (isSettingCode.current) {
       isSettingCode.current = false;
       return;
     }
 
     setCode(value);
+    
+    // Broadcast change
     socket.emit('code-change', { roomId, code: value });
 
+    // Broadcast highlight
+    if (event.changes && event.changes.length > 0) {
+      const change = event.changes[0];
+      socket.emit('remote-change-highlight', { 
+        roomId, 
+        userId: parseInt(localStorage.getItem('userId')),
+        range: change.range 
+      });
+
+      // Activity Update (last changed line)
+      socket.emit('activity-update', {
+        roomId,
+        message: `${localStorage.getItem('username')} edited line ${change.range.startLineNumber}`
+      });
+    }
+
+    // Typing Indicator
+    socket.emit('typing', { roomId, username: localStorage.getItem('username') });
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      socket.emit('stop-typing', { roomId });
+    }, 1500);
+
+    // Save to DB
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
       saveCodeToDB(value, language);
@@ -77,7 +200,7 @@ const CodeEditor = ({ socket, roomId }) => {
 
   const handleRunCode = async () => {
     if (language === 'html') {
-      setOutput(code); // For HTML, we just update the preview
+      setOutput(code);
       return;
     }
 
@@ -101,9 +224,14 @@ const CodeEditor = ({ socket, roomId }) => {
   };
 
   const handleEditorDidMount = (editor, monaco) => {
+    editorRef.current = editor;
+    window.monaco = monaco;
+
     editor.onDidChangeCursorPosition((e) => {
       socket.emit('cursor-move', {
         roomId,
+        userId: parseInt(localStorage.getItem('userId')),
+        username: localStorage.getItem('username'),
         cursor: {
           lineNumber: e.position.lineNumber,
           column: e.position.column

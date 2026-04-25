@@ -134,6 +134,22 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('typing', ({ roomId, username }) => {
+    socket.to(roomId).emit('user-typing', { username });
+  });
+
+  socket.on('stop-typing', ({ roomId }) => {
+    socket.to(roomId).emit('user-stop-typing', { username: socket.data.username });
+  });
+
+  socket.on('activity-update', ({ roomId, message }) => {
+    io.to(roomId).emit('activity-log', {
+      id: Date.now(),
+      text: message,
+      timestamp: new Date().toLocaleTimeString()
+    });
+  });
+
   const handleLeave = () => {
     const roomId = socket.data.roomId;
     const username = socket.data.username;

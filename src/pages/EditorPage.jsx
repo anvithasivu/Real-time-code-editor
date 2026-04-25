@@ -6,6 +6,7 @@ import CodeEditor from '../components/CodeEditor';
 import UsersList from '../components/UsersList';
 import ChatBox from '../components/ChatBox';
 import ApprovalModal from '../components/ApprovalModal';
+import ActivityPanel from '../components/ActivityPanel';
 
 function EditorPage() {
   const { roomId } = useParams();
@@ -16,6 +17,8 @@ function EditorPage() {
   const [joinStatus, setJoinStatus] = useState('checking'); // 'checking', 'none', 'pending', 'approved', 'rejected'
   const [statusMessage, setStatusMessage] = useState('Checking access...');
   const [pendingRequests, setPendingRequests] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [typingUsers, setTypingUsers] = useState([]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -94,26 +97,18 @@ function EditorPage() {
     newSocket.on('incoming-request', (req) => {
       setPendingRequests(prev => [...prev, req]);
     });
-  };
 
-  const handleRequestAccess = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      await axios.post('http://localhost:5000/code/join-request', { roomId }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setJoinStatus('pending');
-      setStatusMessage('Request sent! Waiting for approval...');
-      
-      // Notify creator via socket if they are online
-      const username = localStorage.getItem('username');
-      const userId = parseInt(localStorage.getItem('userId'), 10);
-      if (socket) {
-        socket.emit('join-request-sent', { roomId, userId, username });
-      }
-    } catch (err) {
-      alert('Failed to send request');
-    }
+    newSocket.on('activity-log', (activity) => {
+      setActivities(prev => [...prev.slice(-19), activity]);
+    });
+
+    newSocket.on('user-typing', ({ username }) => {
+      setTypingUsers(prev => prev.includes(username) ? prev : [...prev, username]);
+    });
+
+    newSocket.on('user-stop-typing', ({ username }) => {
+      setTypingUsers(prev => prev.filter(u => u !== username));
+    });
   };
 
   const handleApprove = async (req) => {
@@ -155,7 +150,6 @@ function EditorPage() {
       <div className="join-container" style={{ flexDirection: 'column', gap: '20px' }}>
         <h2>Access Restricted</h2>
         <p>You need permission to enter this room.</p>
-        <button onClick={handleRequestAccess} className="join-button">Request Access</button>
         <button onClick={() => navigate('/dashboard')} className="join-button" style={{ backgroundColor: '#333' }}>Back to Dashboard</button>
       </div>
     );
@@ -193,9 +187,10 @@ function EditorPage() {
       <div className="main-workspace">
         <CodeEditor socket={socket} roomId={roomId} />
       </div>
-      <div className="sidebar">
-        <UsersList users={users} />
+      <div className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
+        <UsersList users={users} typingUsers={typingUsers} />
         <ChatBox socket={socket} roomId={roomId} />
+        <ActivityPanel activities={activities} />
       </div>
     </div>
   );
