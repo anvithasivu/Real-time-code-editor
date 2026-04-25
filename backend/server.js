@@ -134,6 +134,14 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('file-created', ({ roomId, file }) => {
+    socket.to(roomId).emit('file-created', file);
+  });
+
+  socket.on('file-deleted', ({ roomId, fileId }) => {
+    socket.to(roomId).emit('file-deleted', fileId);
+  });
+
   socket.on('typing', ({ roomId, username }) => {
     socket.to(roomId).emit('user-typing', { username });
   });
